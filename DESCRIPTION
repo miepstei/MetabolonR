@@ -1,0 +1,21 @@
+Package: MetabolonR
+Type: Package
+Title: Loads, Manipulates on Metabolon Datasets
+Version: 0.1
+Date: 2016-04-20
+Authors@R: person("Michael", "Epstein", email = "miepstei@outlook.com", role = c("cre"))
+Description: Loads and manipulates Metabolon Datasets for downstream analysis
+License: What license is it under?
+LazyData: TRUE
+Imports:
+    plyr,
+    dplyr,
+    gtools,
+    ggrepel,
+    magrittr,
+    reshape2,
+    tidyr
+RoxygenNote: 5.0.1
+Suggests: knitr,
+    rmarkdown
+VignetteBuilder: knitr

@@ -1,0 +1,138 @@
+---
+title: "How to Read and manuipulate Metabolon Data"
+author: "Michael Epstein"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Vignette Title}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+
+``` {r echo=FALSE,results=FALSE}
+devtools::load_all(".")
+library(ggplot2)
+library(dplyr)
+```
+
+This is a short vignette documenting how to load and manuiplate Metabolon data in `R`.
+
+#The data
+
+First we shall load three data frames that represent the sample metadata, metabolite metadata and the raw metabolite counts for each metabolite in each sample:
+
+
+
+```
+data(metaboliteDataWide)
+data(metaboliteInfo)
+data(sampleInfo)
+
+```
+
+The sample metadata contains information about the sample names, sample volume and when each sample was run (vital for the median normalisation). Here we display information about the dummy sample name, the subject id, the day the sample was run and the volume that was sent for analysis:
+
+```{r, include=TRUE}
+data(sampleInfo)
+knitr::kable(head(sampleInfo[,c("SAMPLE_NAME","PARAM_SUBJECT_ID","PARAM_RUN_DAY","PARAM_VOLUME_EXTRACTED_UL")], 10))
+```
+
+The metabolite data frame contains meta information about the metabolites. This selection of data from the frame shows the package internal "Metabolite Name", the corresponding Biochemical name and the Mass of the metabolite as well as the platform used to detect the metabolite.
+
+```{r, include=TRUE}
+data(metaboliteInfo)
+knitr::kable(head(metaboliteInfo[,c("METABOLITE_NAME","BIOCHEMICAL","MASS","PLATFORM")], 10))
+```
+
+Finally, the `metaboliteDataWide` frame contains the actual count data. The first row denotes the `SAMPLE_NAME` and the remaining columns each metabolite and the corresponding counts in each sample.
+
+```{r, include=TRUE}
+data(metaboliteDataWide)
+knitr::kable(head(metaboliteDataWide[,1:4], 10))
+```
+
+The metabolites shown above show the counts in samples `METAB1` to `METAB10` for the internal standards labelled `M1`, `M2` and `M3`.
+
+#The normalisation
+
+We always want to start from the "raw" data. This gives us control over the normalisation and can provide a double check that the Metabolon normalisation is consistent with our understanding.
+
+There are two stages to the normalisation.
+
+##Volume Normalisation
+The first is a simple volume normalisation that adjusts metabolite levels:
+
+```{r, fig.width = 8, fig.height = 4}
+metDataLong <- MetDataWideToLong(metaboliteDataWide)
+volNormalised <- VolumeNormaliseDataset(cSampleInfo = sampleInfo, cMetInfo = metaboliteInfo , cMetDataLong = metDataLong, normalVolume = 95)
+
+#convert bot to logs and plot
+metDataLongLog10 <- TransformLog10Mets(dplyr::filter(metDataLong, METABOLITE_NAME=="M14"))
+volNormalisedLog10 <- TransformLog10Mets(dplyr::filter(volNormalised, METABOLITE_NAME=="M14"))
+
+plot <- ggplot2::ggplot()
+plot <- plot + ggplot2::geom_point(data = metDataLongLog10, ggplot2::aes(x = SAMPLE_NAME, y = METABOLITE_COUNT), colour = "red")
+plot <- plot + ggplot2::geom_point(data = volNormalisedLog10, ggplot2::aes(x = SAMPLE_NAME, y = METABOLITE_COUNT), colour = "blue")
+plot <- plot + ggplot2::theme(legend.position="bottom")
+plot
+
+```
+
+
+##Median Normalisation
+The Metabolon normalisation normalises each count with reference to the global median of that particular metabolite. Each metabolite is scaled by the ratio of the median metabolite level for that run day divided by the global median.
+
+```{r}
+
+metDataLong <- MetDataWideToLong(metaboliteDataWide)
+metDataLongLog10 <- TransformLog10Mets(metDataLong)
+normalised <- MedianNormaliseDataset(cSampleInfo = sampleInfo, cMetLog10DataLong = metDataLongLog10, normaliseField = "PARAM_RUN_DAY", normaliseGroups = c(1,2))
+
+knitr::kable(head(normalised))
+
+```
+
+we can plot the difference in normalisation and raw data across samples for a single metabolite
+
+```{r, include = TRUE, fig.width = 8, fig.height = 4}
+
+metDataLong <- MetDataWideToLong(metaboliteDataWide)
+metDataLongLog10 <- TransformLog10Mets(metDataLong)
+normalised <- MedianNormaliseDataset(cSampleInfo = sampleInfo, cMetLog10DataLong = metDataLongLog10, normaliseField = "PARAM_RUN_DAY", normaliseGroups = c(1,2))
+
+unNormalised <- dplyr::filter(metDataLongLog10, METABOLITE_NAME=="M14")
+normalised <- dplyr::filter(normalised, METABOLITE_NAME=="M14")
+
+#join with the sample metadata
+unNormalised <- dplyr::left_join(unNormalised, dplyr::select(sampleInfo, SAMPLE_NAME, PARAM_RUN_DAY), by="SAMPLE_NAME")
+normalised <- dplyr::left_join(normalised, dplyr::select(sampleInfo, SAMPLE_NAME, PARAM_RUN_DAY), by="SAMPLE_NAME")
+
+plot <- ggplot2::ggplot()
+plot <- plot + ggplot2::geom_point(data = unNormalised, ggplot2::aes(x = SAMPLE_NAME, y = METABOLITE_COUNT), colour = "red")
+plot <- plot + ggplot2::geom_point(data = normalised, ggplot2::aes(x = SAMPLE_NAME, y = METABOLITE_COUNT), colour = "blue")
+plot <- plot + ggplot2::theme(legend.position="bottom")
+plot
+```
+
+## Example visualisation
+
+The end result is that we now have a normalised Metabolon dataset where we can now perform analytics on data, eg.
+
+```{r, include = TRUE, fig.width = 8, fig.height = 4}
+patientNorm <- MedianNormaliseDataset(cSampleInfo = sampleInfo, cMetLog10DataLong = volNormalisedLog10, normaliseField = "PARAM_RUN_DAY", normaliseGroups = c(1,2))
+
+
+patients <- dplyr::select(sampleInfo, SAMPLE_NAME, PARAM_SUBJECT_ID) %>% dplyr::filter(!(PARAM_SUBJECT_ID == ""))
+
+patientNorm <- dplyr::left_join(patientNorm, patients, by = "SAMPLE_NAME")
+
+#lookup the biochemical name for M14
+
+biochemical <- metaboliteInfo[metaboliteInfo$METABOLITE_NAME == "M14",]$BIOCHEMICAL
+
+p <- ggplot(patientNorm) + geom_boxplot(aes(x = PARAM_SUBJECT_ID, y = METABOLITE_COUNT))
+p <- p + ggtitle(paste0("Expression of ", biochemical, " across patients"))
+p
+```
+
